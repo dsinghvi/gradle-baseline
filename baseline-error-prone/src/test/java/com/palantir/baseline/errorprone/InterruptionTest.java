@@ -187,6 +187,26 @@ class InterruptionTest {
                 .doTest(BugCheckerRefactoringTestHelper.TestMode.TEXT_MATCH);
     }
 
+    @Test
+    void testDoesNotMatchTests() {
+        fix()
+                .addInputLines(
+                        "Test.java",
+                        "import static org.assertj.core.api.Assertions.assertThat;",
+                        "public class Test {",
+                        "  void f() {",
+                        "    try {",
+                        "        Thread.sleep(100);",
+                        "        assertThat(Thread.currentThread().getName()).isEqualTo(\"a\");",
+                        "    } catch (InterruptedException e) {",
+                        "        throw new RuntimeException(e);",
+                        "    }",
+                        "  }",
+                        "}")
+                .expectUnchanged()
+                .doTest(BugCheckerRefactoringTestHelper.TestMode.TEXT_MATCH);
+    }
+
     private RefactoringValidator fix() {
         return RefactoringValidator.of(new Interruption(), getClass());
     }

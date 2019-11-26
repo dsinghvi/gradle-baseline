@@ -81,6 +81,12 @@ public final class Interruption extends BugChecker implements BugChecker.TryTree
                             .anyMatch(comment -> comment.getText().contains("interruption reset")))) {
                 return Description.NO_MATCH;
             }
+            // Avoid excessive noise in test code. While there's an argument for including
+            // this check in test code, it makes the rollout significantly noisier and can
+            // be included later.
+            if (TestCheckUtils.isTestCode(state)) {
+                return Description.NO_MATCH;
+            }
             BlockTree blockTree = catchTree.getBlock();
             List<? extends StatementTree> statements = blockTree.getStatements();
             if (!statements.isEmpty()) {
