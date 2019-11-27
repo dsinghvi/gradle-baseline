@@ -163,7 +163,7 @@ final class MoreASTHelpers {
         }
     }
 
-    private static Optional<Symbol.MethodSymbol> getCloseMethod(Symbol.ClassSymbol symbol, VisitorState state) {
+    static Optional<Symbol.MethodSymbol> getCloseMethod(Symbol.ClassSymbol symbol, VisitorState state) {
         Types types = state.getTypes();
         return symbol.getEnclosedElements().stream()
                 .filter(sym ->

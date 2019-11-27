@@ -17,10 +17,12 @@
 package com.palantir.baseline.errorprone;
 
 import com.google.auto.service.AutoService;
+import com.google.common.collect.ImmutableList;
 import com.google.errorprone.BugPattern;
 import com.google.errorprone.VisitorState;
 import com.google.errorprone.bugpatterns.BugChecker;
 import com.google.errorprone.fixes.SuggestedFix;
+import com.google.errorprone.fixes.SuggestedFixes;
 import com.google.errorprone.matchers.Description;
 import com.google.errorprone.matchers.Matcher;
 import com.google.errorprone.matchers.Matchers;
@@ -28,7 +30,11 @@ import com.google.errorprone.util.ASTHelpers;
 import com.sun.source.tree.CatchTree;
 import com.sun.source.tree.Tree;
 import com.sun.source.tree.TryTree;
+import com.sun.tools.javac.code.Symbol;
 import com.sun.tools.javac.code.Type;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.stream.Collectors;
 
 @AutoService(BugChecker.class)
 @BugPattern(
@@ -44,16 +50,28 @@ public final class ExceptionSpecificity extends BugChecker implements BugChecker
     private static final Matcher<Tree> THROWABLE = Matchers.isSameType(Throwable.class);
     private static final Matcher<Tree> EXCEPTION = Matchers.isSameType(Exception.class);
 
+    private static final ImmutableList<String> THROWABLE_REPLACEMENTS =
+            ImmutableList.of(RuntimeException.class.getName(), Error.class.getName());
+    private static final ImmutableList<String> EXCEPTION_REPLACEMENTS =
+            ImmutableList.of(RuntimeException.class.getName());
+
     @Override
     public Description matchTry(TryTree tree, VisitorState state) {
+        List<Type> encounteredTypes = new ArrayList<>();
         for (CatchTree catchTree : tree.getCatches()) {
             Tree catchTypeTree = catchTree.getParameter().getType();
             Type catchType = ASTHelpers.getType(catchTypeTree);
             // Don't match union types for now e.g. 'catch (RuntimeException | Error e)'
             // It's not worth the complexity at this point.
-            if (catchType == null || catchType.isUnion()) {
+            if (catchType == null) {
                 continue;
             }
+            if (catchType.isUnion()) {
+                Type.UnionClassType unionType = (Type.UnionClassType) catchType;
+                unionType.getAlternativeTypes().forEach(encounteredTypes::add);
+                continue;
+            }
+
             boolean isException = EXCEPTION.matches(catchTypeTree, state);
             boolean isThrowable = THROWABLE.matches(catchTypeTree, state);
             if (isException || isThrowable) {
@@ -63,26 +81,70 @@ public final class ExceptionSpecificity extends BugChecker implements BugChecker
                 // 2. We have implemented deduplication e.g. [IOException, FileNotFoundException] -> [IOException].
                 // 3. There are fewer than some threshold of checked exceptions, perhaps three.
                 if (!throwsCheckedExceptions(tree, state)) {
+                    List<String> replacements = deduplicateCatchTypes(
+                            isThrowable ? THROWABLE_REPLACEMENTS : EXCEPTION_REPLACEMENTS,
+                            encounteredTypes,
+                            state);
+                    SuggestedFix.Builder fix = SuggestedFix.builder();
+                    if (replacements.isEmpty()) {
+                        fix.replace(catchTree, "");
+                    } else {
+                        fix.replace(catchTypeTree, replacements.stream()
+                                .map(type -> SuggestedFixes.qualifyType(state, fix, type))
+                                .collect(Collectors.joining(" | ")));
+                    }
                     return buildDescription(catchTypeTree)
-                            .addFix(SuggestedFix.builder()
-                                    .replace(catchTypeTree,
-                                            isThrowable ? "RuntimeException | Error" : "RuntimeException")
-                                    .build())
+                            .addFix(fix.build())
                             .build();
                 }
                 return Description.NO_MATCH;
             }
+            // mark the type as caught before continuing
+            encounteredTypes.add(catchType);
         }
         return Description.NO_MATCH;
     }
 
+    /** Caught types cannot be duplicated because code will not compile. */
+    private static List<String> deduplicateCatchTypes(
+            List<String> proposedReplacements,
+            List<Type> caughtTypes,
+            VisitorState state) {
+        List<String> replacements = new ArrayList<>();
+        for (String proposedReplacement : proposedReplacements) {
+            Type replacementType = state.getTypeFromString(proposedReplacement);
+            if (caughtTypes.stream()
+                    .noneMatch(alreadyCaught -> state.getTypes().isSubtype(replacementType, alreadyCaught))) {
+                replacements.add(proposedReplacement);
+            }
+        }
+        return replacements;
+    }
+
     private static boolean throwsCheckedExceptions(TryTree tree, VisitorState state) {
         return throwsCheckedExceptions(tree.getBlock(), state)
-                || tree.getResources().stream().anyMatch(resource -> throwsCheckedExceptions(resource, state));
+                || tree.getResources().stream().anyMatch(resource -> resourceThrowsCheckedExceptions(resource, state));
     }
 
     private static boolean throwsCheckedExceptions(Tree tree, VisitorState state) {
         return !MoreASTHelpers.getThrownCheckedExceptions(tree, state).isEmpty();
     }
 
+    private static boolean resourceThrowsCheckedExceptions(Tree resource, VisitorState state) {
+        if (throwsCheckedExceptions(resource, state)) {
+            return true;
+        }
+        Type resourceType = ASTHelpers.getType(resource);
+        if (resourceType == null) {
+            return false;
+        }
+        Symbol.TypeSymbol symbol = resourceType.tsym;
+        if (symbol instanceof Symbol.ClassSymbol) {
+            return MoreASTHelpers.getCloseMethod((Symbol.ClassSymbol) symbol, state)
+                    // Checks any exception is thrown, ideally this would only check for IOExceptions
+                    .map(Symbol.MethodSymbol::getThrownTypes).map(types -> !types.isEmpty())
+                    .orElse(false);
+        }
+        return false;
+    }
 }

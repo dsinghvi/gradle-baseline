@@ -48,7 +48,101 @@ class ExceptionSpecificityTest {
     }
 
     @Test
-    void testResource() {
+    void testFixMultipleCatchBlocks() {
+        fix()
+                .addInputLines("Test.java",
+                        "class Test {",
+                        "  void f(String param) {",
+                        "    try {",
+                        "        System.out.println(\"hello\");",
+                        "    } catch (RuntimeException e) {",
+                        "        throw e;",
+                        "    } catch (Throwable t) {",
+                        "        System.out.println(\"foo\");",
+                        "    }",
+                        "  }",
+                        "}")
+                .addOutputLines("Test.java",
+                        "class Test {",
+                        "  void f(String param) {",
+                        "    try {",
+                        "        System.out.println(\"hello\");",
+                        "    } catch (RuntimeException e) {",
+                        "        throw e;",
+                        "    } catch (Error t) {",
+                        "        System.out.println(\"foo\");",
+                        "    }",
+                        "  }",
+                        "}")
+                .doTest(BugCheckerRefactoringTestHelper.TestMode.TEXT_MATCH);
+    }
+
+    @Test
+    void testFixMultipleCatchBlocks_unnecessaryCatch() {
+        fix()
+                .addInputLines("Test.java",
+                        "class Test {",
+                        "  void f(String param) {",
+                        "    try {",
+                        "        System.out.println(\"hello\");",
+                        "    } catch (RuntimeException e) {",
+                        "        throw e;",
+                        "    } catch (Exception t) {", // this is unreachable
+                        "        System.out.println(\"foo\");",
+                        "    }",
+                        "  }",
+                        "}")
+                .addOutputLines("Test.java",
+                        "class Test {",
+                        "  void f(String param) {",
+                        "    try {",
+                        "        System.out.println(\"hello\");",
+                        "    } catch (RuntimeException e) {",
+                        "        throw e;",
+                        "    }",
+                        "  }",
+                        "}")
+                .doTest(BugCheckerRefactoringTestHelper.TestMode.TEXT_MATCH);
+    }
+
+    @Test
+    void testFix_resourceDoesNotThrow() {
+        fix()
+                .addInputLines("Test.java",
+                        "import java.io.*;",
+                        "class Test {",
+                        "  void f(String param) {",
+                        "    try (SafeCloseable ignored = SafeCloseable.INSTANCE) {",
+                        "        System.out.println(\"hello\");",
+                        "    } catch (Throwable t) {",
+                        "        System.out.println(\"foo\");",
+                        "    }",
+                        "  }",
+                        "  enum SafeCloseable implements Closeable {",
+                        "      INSTANCE;",
+                        "      @Override public void close() {}",
+                        "  }",
+                        "}")
+                .addOutputLines("Test.java",
+                        "import java.io.*;",
+                        "class Test {",
+                        "  void f(String param) {",
+                        "    try (SafeCloseable ignored = SafeCloseable.INSTANCE) {",
+                        "        System.out.println(\"hello\");",
+                        "    } catch (RuntimeException | Error t) {",
+                        "        System.out.println(\"foo\");",
+                        "    }",
+                        "  }",
+                        "  enum SafeCloseable implements Closeable {",
+                        "      INSTANCE;",
+                        "      @Override public void close() {}",
+                        "  }",
+                        "}")
+                .doTest(BugCheckerRefactoringTestHelper.TestMode.TEXT_MATCH);
+    }
+
+    @Test
+    void testResource_creationThrows() {
         fix()
                 .addInputLines("Test.java",
                         "import java.io.*;",
@@ -59,6 +153,28 @@ class ExceptionSpecificityTest {
                         "    } catch (Throwable t) {",
                         "        System.out.println(\"foo\");",
                         "    }",
+                        "  }",
+                        "}")
+                .expectUnchanged()
+                .doTest(BugCheckerRefactoringTestHelper.TestMode.TEXT_MATCH);
+    }
+
+
+    @Test
+    void testResource_closeThrows() {
+        fix()
+                .addInputLines("Test.java",
+                        "import java.io.*;",
+                        "class Test {",
+                        "  void f(String param) {",
+                        "    try (OutputStream os = os()) {",
+                        "        System.out.println(\"hello\");",
+                        "    } catch (Throwable t) {",
+                        "        System.out.println(\"foo\");",
+                        "    }",
+                        "  }",
+                        "  OutputStream os() {",
+                        "    return new ByteArrayOutputStream();",
                         "  }",
                         "}")
                 .expectUnchanged()
