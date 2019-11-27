@@ -142,6 +142,41 @@ class ExceptionSpecificityTest {
     }
 
     @Test
+    void testFixWithUnreachableConditional() {
+        fix()
+                .addInputLines("Test.java",
+                        "class Test {",
+                        "  void f(String param) throws Exception {",
+                        "    try {",
+                        "        System.out.println(\"hello\");",
+                        "    } catch (Exception e) {",
+                        "        if (e instanceof InterruptedException) {",
+                        "            throw e;",
+                        "        }",
+                        "        System.out.println(\"foo\");",
+                        "    }",
+                        "  }",
+                        "}")
+                .addOutputLines("Test.java",
+                        "class Test {",
+                        "  void f(String param) throws Exception {",
+                        "    try {",
+                        "        System.out.println(\"hello\");",
+                        "    } catch (RuntimeException e) {",
+                        // We could replace bad instanceof checks with 'false' and remove conditionals, but
+                        // there's a long tail of potential failures for too few cases. It's best if we leave
+                        // this code in a state that it's obviously unreachable for developers to fix.
+                        "        if (e instanceof InterruptedException) {",
+                        "            throw e;",
+                        "        }",
+                        "        System.out.println(\"foo\");",
+                        "    }",
+                        "  }",
+                        "}")
+                .doTestExpectingFailure(BugCheckerRefactoringTestHelper.TestMode.TEXT_MATCH);
+    }
+
+    @Test
     void testResource_creationThrows() {
         fix()
                 .addInputLines("Test.java",
